@@ -72,7 +72,6 @@ const validatePriority = (priority) => {
 app.get('/api/v1/clients', (req, res) => {
   const status = req.query.status;
   if (status) {
-    // status can only be either 'backlog' | 'in-progress' | 'complete'
     if (status !== 'backlog' && status !== 'in-progress' && status !== 'complete') {
       return res.status(400).send({
         'message': 'Invalid status provided.',
@@ -92,10 +91,11 @@ app.get('/api/v1/clients', (req, res) => {
  * GET /api/v1/clients/{client_id} - get client by id
  */
 app.get('/api/v1/clients/:id', (req, res) => {
-  const id = parseInt(req.params.id , 10);
+  const id = parseInt(req.params.id, 10);
   const { valid, messageObj } = validateId(id);
   if (!valid) {
     res.status(400).send(messageObj);
+    return;
   }
   return res.status(200).send(db.prepare('select * from clients where id = ?').get(id));
 });
@@ -115,22 +115,53 @@ app.get('/api/v1/clients/:id', (req, res) => {
  *
  */
 app.put('/api/v1/clients/:id', (req, res) => {
-  const id = parseInt(req.params.id , 10);
+  const id = parseInt(req.params.id, 10);
   const { valid, messageObj } = validateId(id);
   if (!valid) {
     res.status(400).send(messageObj);
+    return;
   }
 
-  let { status, priority } = req.body;
+  const { status, priority } = req.body;
   let clients = db.prepare('select * from clients').all();
-  const client = clients.find(client => client.id === id);
+  const client = clients.find((c) => c.id === id);
 
-  /* ---------- Update code below ----------*/
+  if (status) {
+    if (status !== 'backlog' && status !== 'in-progress' && status !== 'complete') {
+      return res.status(400).send({
+        message: 'Invalid status provided.',
+        long_message: 'Status can only be one of the following: [backlog | in-progress | complete].',
+      });
+    }
+    client.status = status;
+  }
 
+  if (priority !== undefined) {
+    const newPriority = parseInt(priority, 10);
+    if (Number.isNaN(newPriority) || newPriority <= 0) {
+      return res.status(400).send({
+        message: 'Invalid priority provided.',
+        long_message: 'Priority must be a positive integer.',
+      });
+    }
 
+    const clientsWithSameStatus = clients.filter((c) => c.status === client.status);
+    const existingPriorities = new Set(clientsWithSameStatus.map((c) => c.priority));
+    if (existingPriorities.has(newPriority)) {
+      return res.status(400).send({
+        message: 'Invalid priority provided.',
+        long_message: 'Priority must be unique among clients in the same status.',
+      });
+    }
 
-  return res.status(200).send(clients);
+    client.priority = newPriority;
+  }
+
+  db.prepare('UPDATE clients SET status = ?, priority = ? WHERE id = ?').run(client.status, client.priority, id);
+  clients = db.prepare('SELECT * FROM clients').all();
+
+  res.status(200).send(clients);
 });
 
 app.listen(3001);
-console.log('app running on port ', 3001);
+console.log('App is running on port', 3001);
